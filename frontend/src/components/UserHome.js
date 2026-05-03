@@ -5,6 +5,58 @@ import BlogDetail from "./BlogDetail";
 
 const API = "http://localhost:5000";
 const EMOJIS = ["\ud83d\ude0a", "\ud83d\ude22", "\ud83d\ude21", "\ud83d\udc4d"];
+function SidebarNavIcon({ type }) {
+  const iconProps = {
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "1.9",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": true,
+  };
+
+  switch (type) {
+    case "profile":
+      return (
+        <svg {...iconProps}>
+          <circle cx="12" cy="8" r="3.25" />
+          <path d="M5 19c1.7-3 4.1-4.5 7-4.5S17.3 16 19 19" />
+        </svg>
+      );
+    case "addpost":
+      return (
+        <svg {...iconProps}>
+          <rect x="4" y="4" width="16" height="16" rx="4" />
+          <path d="M12 8v8" />
+          <path d="M8 12h8" />
+        </svg>
+      );
+    case "feed":
+      return (
+        <svg {...iconProps}>
+          <rect x="3.5" y="4" width="17" height="16" rx="3" />
+          <path d="M9 8h7" />
+          <path d="M9 12h7" />
+          <path d="M9 16h5" />
+          <circle cx="6.5" cy="8" r="0.8" fill="currentColor" stroke="none" />
+          <circle cx="6.5" cy="12" r="0.8" fill="currentColor" stroke="none" />
+          <circle cx="6.5" cy="16" r="0.8" fill="currentColor" stroke="none" />
+        </svg>
+      );
+    case "blogs":
+      return (
+        <svg {...iconProps}>
+          <path d="M5 6.5A2.5 2.5 0 0 1 7.5 4H19v14.5a1.5 1.5 0 0 0-1.5-1.5H7.5A2.5 2.5 0 0 0 5 19.5z" />
+          <path d="M5 6.5v13" />
+          <path d="M8 7.5h8" />
+          <path d="M8 11h6" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
 
 function UserHome({ auth, onLogout }) {
   const [activeTab, setActiveTab] = useState("feed");
@@ -23,6 +75,12 @@ function UserHome({ auth, onLogout }) {
   // Feed Filters
   const [filterCategory, setFilterCategory] = useState("");
   const [filterStress, setFilterStress] = useState("");
+  const [sortBy, setSortBy] = useState("");
+
+  // Dark mode
+  const [darkMode, setDarkMode] = useState(() => {
+    return localStorage.getItem("stressbook_theme") === "dark";
+  });
 
   // Report modal
   const [reportModal, setReportModal] = useState(null);
@@ -62,6 +120,9 @@ function UserHome({ auth, onLogout }) {
   const [blogTab, setBlogTab] = useState("list");
   const [currentBlogId, setCurrentBlogId] = useState(null);
 
+  // Follow / Privacy
+  const [followLoading, setFollowLoading] = useState(false);
+
   const headers = { Authorization: `Bearer ${auth.token}` };
 
   // ==================== FETCHERS ====================
@@ -73,13 +134,15 @@ function UserHome({ auth, onLogout }) {
     } catch (err) { console.error(err); }
   };
 
-  const fetchPosts = async (catOverride, stressOverride) => {
+  const fetchPosts = async (catOverride, stressOverride, sortOverride) => {
     try {
       const params = {};
       const cat = catOverride !== undefined ? catOverride : filterCategory;
       const stress = stressOverride !== undefined ? stressOverride : filterStress;
+      const sort = sortOverride !== undefined ? sortOverride : sortBy;
       if (cat) params.category = cat;
       if (stress) params.stress_level = stress;
+      if (sort) params.sort_by = sort;
       const res = await axios.get(`${API}/posts`, { headers, params });
       setPosts(res.data);
     } catch (err) { console.error(err); }
@@ -112,6 +175,17 @@ function UserHome({ auth, onLogout }) {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
+
+  // Dark mode effect
+  useEffect(() => {
+    if (darkMode) {
+      document.body.classList.add("dark");
+      localStorage.setItem("stressbook_theme", "dark");
+    } else {
+      document.body.classList.remove("dark");
+      localStorage.setItem("stressbook_theme", "light");
+    }
+  }, [darkMode]);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -183,6 +257,35 @@ function UserHome({ auth, onLogout }) {
     } catch (err) { setPostMsg("Error posting"); }
   };
 
+  const handleDeleteOwnPost = async (postId) => {
+    if (!window.confirm("Delete this post?")) return;
+    try {
+      await axios.delete(`${API}/posts/${postId}`, { headers });
+      fetchPosts();
+      fetchProfile();
+      setPostMsg("Post deleted successfully.");
+      setTimeout(() => setPostMsg(""), 3000);
+    } catch (err) {
+      const message = err.response?.data?.error || "Error deleting post";
+      setPostMsg(message);
+      setTimeout(() => setPostMsg(""), 3000);
+    }
+  };
+  // ==================== LIKES ====================
+
+  const handleLike = async (postId) => {
+    try {
+      const res = await axios.post(`${API}/posts/${postId}/like`, {}, { headers });
+      setPosts((prev) =>
+        prev.map((p) =>
+          p.id === postId
+            ? { ...p, like_count: res.data.like_count, liked_by_me: res.data.liked }
+            : p
+        )
+      );
+    } catch (err) { console.error(err); }
+  };
+
   // ==================== REPORT ====================
 
   const handleReport = async () => {
@@ -238,15 +341,53 @@ function UserHome({ auth, onLogout }) {
     setChatInput("");
     setChatLoading(true);
     try {
-      const res = await axios.post(`${API}/chat`, { message: userMsg }, { headers });
-      setChatMessages((prev) => [...prev, { role: "bot", content: res.data.reply }]);
+      const res = await axios.post(`${API}/chat`, { message: userMsg, history: chatMessages }, { headers });
+      setChatMessages((prev) => [...prev, {
+        role: "bot",
+        content: res.data.reply,
+        suggested_blogs: res.data.suggested_blogs || []
+      }]);
     } catch (err) {
       setChatMessages((prev) => [...prev, { role: "bot", content: err.response?.data?.error || "Error" }]);
     } finally { setChatLoading(false); }
   };
 
+  const handleOpenBlogFromChat = (blogId) => {
+    setCurrentBlogId(blogId);
+    setBlogTab("detail");
+    setActiveTab("blogs");
+  };
+
   const handleChatKey = (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleChatSend(); }
+  };
+
+  // ==================== FOLLOW / PRIVACY ====================
+
+  const handleFollowToggle = async (targetUserId) => {
+    setFollowLoading(true);
+    try {
+      await axios.post(`${API}/follow/${targetUserId}`, {}, { headers });
+      const res = await axios.get(`${API}/profile/${targetUserId}`, { headers });
+      setViewProfile(res.data);
+      fetchPosts();
+    } catch (err) { console.error(err); }
+    finally { setFollowLoading(false); }
+  };
+
+  const handleFollowRequestAction = async (requestId, action) => {
+    try {
+      await axios.post(`${API}/follow-request/${requestId}/${action}`, {}, { headers });
+      fetchNotifications();
+    } catch (err) { console.error(err); }
+  };
+
+  const handlePrivacyToggle = async () => {
+    const newVal = !profile.user.is_private;
+    try {
+      await axios.put(`${API}/profile/privacy`, { is_private: newVal }, { headers });
+      fetchProfile();
+    } catch (err) { console.error(err); }
   };
 
   // ==================== HELPERS ====================
@@ -335,6 +476,22 @@ function UserHome({ auth, onLogout }) {
                   notifications.map((n) => (
                     <div key={n.id} className={`notif-item ${n.is_read ? "" : "unread"}`}>
                       <p>{n.message}</p>
+                      {n.notif_type === "follow_request" && n.request_status === "pending" && (
+                        <div className="follow-request-actions">
+                          <button
+                            className="follow-req-btn accept"
+                            onClick={() => handleFollowRequestAction(n.related_id, "accept")}
+                          >
+                            Accept
+                          </button>
+                          <button
+                            className="follow-req-btn decline"
+                            onClick={() => handleFollowRequestAction(n.related_id, "decline")}
+                          >
+                            Decline
+                          </button>
+                        </div>
+                      )}
                       <span className="notif-time">{n.created_at}</span>
                     </div>
                   ))
@@ -343,6 +500,9 @@ function UserHome({ auth, onLogout }) {
             )}
           </div>
 
+          <button className="theme-toggle-btn" onClick={() => setDarkMode((d) => !d)} title={darkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}>
+            {darkMode ? "🌙 Dark" : "☀️ Light"}
+          </button>
           <span className="navbar-email">{auth.name || auth.email}</span>
           <button className="logout-btn" onClick={onLogout}>Logout</button>
         </div>
@@ -351,21 +511,26 @@ function UserHome({ auth, onLogout }) {
       <div className="user-body">
         {/* ==================== SIDEBAR ==================== */}
         <div className="sidebar">
+          <div className="sidebar-section-label">Workspace</div>
           <div className={`sidebar-item ${activeTab === "profile" ? "active" : ""}`}
                onClick={() => { setActiveTab("profile"); fetchProfile(); }}>
-            <span className="sidebar-icon">{"\ud83d\udc64"}</span> Profile
+            <span className="sidebar-icon"><SidebarNavIcon type="profile" /></span>
+            <span className="sidebar-text">Profile</span>
           </div>
           <div className={`sidebar-item ${activeTab === "addpost" ? "active" : ""}`}
                onClick={() => setActiveTab("addpost")}>
-            <span className="sidebar-icon">{"\u2795"}</span> Add Post
+            <span className="sidebar-icon"><SidebarNavIcon type="addpost" /></span>
+            <span className="sidebar-text">Add Post</span>
           </div>
           <div className={`sidebar-item ${activeTab === "feed" ? "active" : ""}`}
                onClick={() => { setActiveTab("feed"); fetchPosts(); }}>
-            <span className="sidebar-icon">{"\ud83d\udcf0"}</span> Feed
+            <span className="sidebar-icon"><SidebarNavIcon type="feed" /></span>
+            <span className="sidebar-text">Feed</span>
           </div>
           <div className={`sidebar-item ${activeTab === "blogs" ? "active" : ""}`}
                onClick={() => { setActiveTab("blogs"); setBlogTab("list"); }}>
-            <span className="sidebar-icon">{"\ud83d\udcd6"}</span> Blogs
+            <span className="sidebar-icon"><SidebarNavIcon type="blogs" /></span>
+            <span className="sidebar-text">Blogs</span>
           </div>
         </div>
 
@@ -414,12 +579,42 @@ function UserHome({ auth, onLogout }) {
                 <div className="stats-grid">
                   <div className="stat-box">
                     <div className="stat-number">{profile.stats.total_posts}</div>
-                    <div className="stat-label">Total Posts</div>
+                    <div className="stat-label">Posts</div>
+                  </div>
+                  <div className="stat-box">
+                    <div className="stat-number">{profile.followers_count || 0}</div>
+                    <div className="stat-label">Followers</div>
+                  </div>
+                  <div className="stat-box">
+                    <div className="stat-number">{profile.following_count || 0}</div>
+                    <div className="stat-label">Following</div>
                   </div>
                   <div className="stat-box">
                     <div className="stat-number">{profile.stats.last_active ? profile.stats.last_active.split(" ")[0] : "N/A"}</div>
                     <div className="stat-label">Last Active</div>
                   </div>
+                </div>
+              </div>
+
+              <div className="info-card privacy-card">
+                <h3>{"\ud83d\udd12"} Privacy Settings</h3>
+                <div className="privacy-row">
+                  <div className="privacy-status">
+                    <span className={`privacy-badge ${profile.user.is_private ? "private" : "public"}`}>
+                      {profile.user.is_private ? "\ud83d\udd12 Private" : "\ud83c\udf10 Public"}
+                    </span>
+                    <p className="privacy-hint">
+                      {profile.user.is_private
+                        ? "Only your followers can see your posts and interact with them."
+                        : "Everyone can see your posts and interact with them."}
+                    </p>
+                  </div>
+                  <button
+                    className={`privacy-toggle-btn ${profile.user.is_private ? "make-public" : "make-private"}`}
+                    onClick={handlePrivacyToggle}
+                  >
+                    {profile.user.is_private ? "Make Public" : "Make Private"}
+                  </button>
                 </div>
               </div>
 
@@ -435,6 +630,9 @@ function UserHome({ auth, onLogout }) {
                       <div className="my-post-meta">
                         {p.category && <span className="category-badge sm">{p.category}</span>}
                         <span className="my-post-date">{p.created_at}</span>
+                        <button className="btn-danger-sm my-post-delete-btn" onClick={() => handleDeleteOwnPost(p.id)}>
+                          Delete
+                        </button>
                       </div>
                     </div>
                   ))
@@ -456,7 +654,12 @@ function UserHome({ auth, onLogout }) {
                   )}
                 </div>
                 <div className="profile-info">
-                  <h2>{viewProfile.user.name}</h2>
+                  <h2>
+                    {viewProfile.user.name}
+                    {viewProfile.is_private && (
+                      <span className="privacy-badge private" style={{ marginLeft: 8, fontSize: "0.85rem" }}>{"\ud83d\udd12"} Private</span>
+                    )}
+                  </h2>
                   <div className="profile-details">
                     <div className="profile-detail-item">
                       <span className="profile-label">Email</span>
@@ -467,21 +670,63 @@ function UserHome({ auth, onLogout }) {
                       <span>{viewProfile.user.created_at ? viewProfile.user.created_at.split(" ")[0] : "-"}</span>
                     </div>
                   </div>
+                  <button
+                    className={`follow-btn ${viewProfile.is_following ? "following" : viewProfile.has_pending_request ? "requested" : ""}`}
+                    onClick={() => handleFollowToggle(viewProfile.user.id)}
+                    disabled={followLoading}
+                  >
+                    {followLoading ? "..." : viewProfile.is_following ? "\u2713 Following" : viewProfile.has_pending_request ? "Requested" : "+ Follow"}
+                  </button>
                 </div>
               </div>
+
               <div className="info-card">
-                <h3>{"\ud83d\udcdd"} Posts ({viewProfile.stats.total_posts})</h3>
-                {viewProfile.posts.length === 0 ? (
-                  <p className="empty-text">No posts.</p>
-                ) : (
-                  viewProfile.posts.map((p) => (
-                    <div className="my-post-item" key={p.id}>
-                      <p className="my-post-content">{p.content}</p>
-                      <span className="my-post-date">{p.created_at}</span>
-                    </div>
-                  ))
-                )}
+                <div className="stats-grid">
+                  <div className="stat-box">
+                    <div className="stat-number">{viewProfile.followers_count || 0}</div>
+                    <div className="stat-label">Followers</div>
+                  </div>
+                  <div className="stat-box">
+                    <div className="stat-number">{viewProfile.following_count || 0}</div>
+                    <div className="stat-label">Following</div>
+                  </div>
+                  <div className="stat-box">
+                    <div className="stat-number">{viewProfile.stats.total_posts}</div>
+                    <div className="stat-label">Posts</div>
+                  </div>
+                </div>
               </div>
+
+              {viewProfile.is_locked ? (
+                <div className="info-card private-locked-card">
+                  <div className="private-locked-body">
+                    <div className="private-lock-icon">{"\ud83d\udd12"}</div>
+                    <h3>This Account is Private</h3>
+                    <p>Follow {viewProfile.user.name} to see their posts.</p>
+                    <button
+                      className={`follow-btn ${viewProfile.has_pending_request ? "requested" : ""}`}
+                      onClick={() => handleFollowToggle(viewProfile.user.id)}
+                      disabled={followLoading}
+                    >
+                      {followLoading ? "..." : viewProfile.has_pending_request ? "Requested" : "+ Follow"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="info-card">
+                  <h3>{"\ud83d\udcdd"} Posts ({viewProfile.stats.total_posts})</h3>
+                  {viewProfile.posts.length === 0 ? (
+                    <p className="empty-text">No posts.</p>
+                  ) : (
+                    viewProfile.posts.map((p) => (
+                      <div className="my-post-item" key={p.id}>
+                        <p className="my-post-content">{p.content}</p>
+                        <span className="my-post-date">{p.created_at}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
             </>
           )}
 
@@ -559,7 +804,7 @@ function UserHome({ auth, onLogout }) {
             <>
               {/* Filter Bar */}
               <div className="feed-filters">
-                <select value={filterCategory} onChange={(e) => { setFilterCategory(e.target.value); fetchPosts(e.target.value, undefined); }}>
+                <select value={filterCategory} onChange={(e) => { setFilterCategory(e.target.value); fetchPosts(e.target.value, undefined, undefined); }}>
                   <option value="">All Categories</option>
                   <option value="Academic">Academic</option>
                   <option value="Work">Work</option>
@@ -568,14 +813,19 @@ function UserHome({ auth, onLogout }) {
                   <option value="Health">Health</option>
                   <option value="Other">Other</option>
                 </select>
-                <select value={filterStress} onChange={(e) => { setFilterStress(e.target.value); fetchPosts(undefined, e.target.value); }}>
+                <select value={filterStress} onChange={(e) => { setFilterStress(e.target.value); fetchPosts(undefined, e.target.value, undefined); }}>
                   <option value="">All Stress Levels</option>
                   <option value="High">High</option>
                   <option value="Medium">Medium</option>
                   <option value="Low">Low</option>
                 </select>
-                {(filterCategory || filterStress) && (
-                  <button className="filter-clear-btn" onClick={() => { setFilterCategory(""); setFilterStress(""); fetchPosts("", ""); }}>
+                <select value={sortBy} onChange={(e) => { setSortBy(e.target.value); fetchPosts(undefined, undefined, e.target.value); }}>
+                  <option value="">Sort: Latest</option>
+                  <option value="most_likes">Most Likes</option>
+                  <option value="most_comments">Most Comments</option>
+                </select>
+                {(filterCategory || filterStress || sortBy) && (
+                  <button className="filter-clear-btn" onClick={() => { setFilterCategory(""); setFilterStress(""); setSortBy(""); fetchPosts("", "", ""); }}>
                     Clear Filters
                   </button>
                 )}
@@ -599,15 +849,32 @@ function UserHome({ auth, onLogout }) {
                       <div className="post-time">{post.created_at}</div>
                     </div>
                     {post.category && <span className="category-badge">{post.category}</span>}
-                    <button className="report-btn"
-                            onClick={() => { setReportModal(post.id); setReportReason(""); setReportMsg(""); }}>
-                      {"\ud83d\udea9"} Report
-                    </button>
+                    {post.user_id === auth.user_id ? (
+                      <button className="btn-danger-sm post-action-btn" onClick={() => handleDeleteOwnPost(post.id)}>
+                        Delete
+                      </button>
+                    ) : (
+                      <button className="report-btn post-action-btn"
+                              onClick={() => { setReportModal(post.id); setReportReason(""); setReportMsg(""); }}>
+                        Report
+                      </button>
+                    )}
                   </div>
                   {post.image && (
                     <img src={`${API}${post.image}`} alt="post" className="post-image" />
                   )}
                   <p className="post-content">{post.content}</p>
+
+                  {/* Like Button */}
+                  <div className="post-actions-row">
+                    <button
+                      className={`like-btn${post.liked_by_me ? " liked" : ""}`}
+                      onClick={() => handleLike(post.id)}
+                    >
+                      <span className="heart-icon">{post.liked_by_me ? "❤️" : "🤍"}</span>
+                      <span>{post.like_count || 0}</span>
+                    </button>
+                  </div>
 
                   {/* Comments */}
                   <div className="comments-section">
@@ -655,6 +922,22 @@ function UserHome({ auth, onLogout }) {
             {chatMessages.map((msg, i) => (
               <div key={i} className={`chatbot-msg ${msg.role === "user" ? "chatbot-msg-user" : "chatbot-msg-bot"}`}>
                 {msg.content}
+                {msg.role === "bot" && msg.suggested_blogs && msg.suggested_blogs.length > 0 && (
+                  <div className="chatbot-blog-suggestions">
+                    <div className="chatbot-blog-suggestions-label">📚 Related Articles</div>
+                    {msg.suggested_blogs.map((blog) => (
+                      <div
+                        key={blog.id}
+                        className="chatbot-blog-card"
+                        onClick={() => handleOpenBlogFromChat(blog.id)}
+                      >
+                        <span className="chatbot-blog-category">{blog.category || "Other"}</span>
+                        <span className="chatbot-blog-title">{blog.title}</span>
+                        <span className="chatbot-blog-arrow">→</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
             {chatLoading && <div className="chatbot-msg chatbot-msg-bot">Thinking...</div>}
@@ -688,3 +971,5 @@ function UserHome({ auth, onLogout }) {
 }
 
 export default UserHome;
+
+

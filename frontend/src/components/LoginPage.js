@@ -13,40 +13,72 @@ function LoginPage({ onLogin }) {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  const resetFields = () => {
+  const clearForm = () => {
     setName("");
     setEmail("");
     setPassword("");
+  };
+
+  const clearMessages = () => {
     setError("");
     setSuccess("");
+  };
+
+  const switchTab = (nextTab) => {
+    setTab(nextTab);
+    setIsRegister(false);
+    clearForm();
+    clearMessages();
+  };
+
+  const toggleRegister = () => {
+    if (tab !== "user") return;
+
+    setIsRegister((prev) => !prev);
+    clearForm();
+    clearMessages();
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError("");
-    setSuccess("");
+    clearMessages();
 
     try {
-      if (tab === "admin" && isRegister) {
-        const res = await axios.post(`${API}/admin/register`, {
+      if (isRegister) {
+        const res = await axios.post(`${API}/user/register`, {
           name,
           email,
           password,
         });
-        setSuccess(res.data.message);
+
+        clearForm();
         setIsRegister(false);
-        resetFields();
-      } else if (tab === "admin") {
+        setSuccess(`${res.data.message}. Please log in.`);
+        return;
+      }
+
+      if (tab === "admin") {
         const res = await axios.post(`${API}/admin/login`, { email, password });
         onLogin(res.data);
-      } else {
-        const res = await axios.post(`${API}/user/login`, { email, password });
-        onLogin(res.data);
+        return;
       }
+
+      const res = await axios.post(`${API}/user/login`, { email, password });
+      onLogin(res.data);
     } catch (err) {
-      setError(err.response?.data?.error || "Something went wrong");
+      setError(err.response?.data?.error || "Server unavailable. Please try again in a moment.");
     }
   };
+
+  const title = tab === "admin"
+    ? "Admin Login"
+    : isRegister
+      ? "User Registration"
+      : "User Login";
+
+  const switchLabel = isRegister
+    ? "Already have an account? Login"
+    : "New user? Register here";
 
   return (
     <div className="login-page">
@@ -63,31 +95,25 @@ function LoginPage({ onLogin }) {
           <div className="login-tabs">
             <button
               className={`login-tab ${tab === "user" ? "active" : ""}`}
-              onClick={() => { setTab("user"); setIsRegister(false); resetFields(); }}
+              onClick={() => switchTab("user")}
             >
               User Login
             </button>
             <button
               className={`login-tab ${tab === "admin" ? "active" : ""}`}
-              onClick={() => { setTab("admin"); resetFields(); }}
+              onClick={() => switchTab("admin")}
             >
               Admin
             </button>
           </div>
 
-          <h2>
-            {tab === "admin"
-              ? isRegister
-                ? "Admin Registration"
-                : "Admin Login"
-              : "User Login"}
-          </h2>
+          <h2>{title}</h2>
 
           {error && <p className="login-error">{error}</p>}
           {success && <p className="login-success">{success}</p>}
 
           <form onSubmit={handleSubmit}>
-            {tab === "admin" && isRegister && (
+            {isRegister && (
               <input
                 type="text"
                 placeholder="Full Name"
@@ -111,17 +137,13 @@ function LoginPage({ onLogin }) {
               required
             />
             <button type="submit" className="login-btn">
-              {tab === "admin" && isRegister ? "Register" : "Login"}
+              {isRegister ? "Register" : "Login"}
             </button>
           </form>
 
-          {tab === "admin" && (
+          {tab === "user" && (
             <div className="login-switch">
-              <button onClick={() => { setIsRegister(!isRegister); setError(""); setSuccess(""); }}>
-                {isRegister
-                  ? "Already have an account? Login"
-                  : "New admin? Register here"}
-              </button>
+              <button onClick={toggleRegister}>{switchLabel}</button>
             </div>
           )}
         </div>

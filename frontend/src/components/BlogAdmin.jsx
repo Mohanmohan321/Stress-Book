@@ -3,10 +3,20 @@ import axios from "axios";
 
 const API = "http://localhost:5000";
 
+const CAT_ICON = {
+  Academic: "🎓",
+  Work: "💼",
+  Personal: "🏠",
+  Financial: "💰",
+  Health: "🏥",
+  Other: "📌",
+};
+
 function BlogAdmin({ auth }) {
   const [blogs, setBlogs] = useState([]);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
+  const [category, setCategory] = useState("Other");
   const [image, setImage] = useState(null);
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("");
@@ -37,6 +47,7 @@ function BlogAdmin({ auth }) {
     const formData = new FormData();
     formData.append("title", title);
     formData.append("content", content);
+    formData.append("category", category);
     if (image) formData.append("image", image);
     try {
       await axios.post(`${API}/blogs`, formData, {
@@ -46,6 +57,7 @@ function BlogAdmin({ auth }) {
       setMsgType("success");
       setTitle("");
       setContent("");
+      setCategory("Other");
       setImage(null);
       if (imageRef.current) imageRef.current.value = "";
       fetchBlogs();
@@ -81,6 +93,21 @@ function BlogAdmin({ auth }) {
             onChange={(e) => setTitle(e.target.value)}
             required
           />
+          <div className="blog-category-row">
+            <label className="blog-category-label">Category:</label>
+            <select
+              className="blog-category-select"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+            >
+              <option value="Academic">🎓 Academic</option>
+              <option value="Work">💼 Work</option>
+              <option value="Personal">🏠 Personal</option>
+              <option value="Financial">💰 Financial</option>
+              <option value="Health">🏥 Health</option>
+              <option value="Other">📌 Other</option>
+            </select>
+          </div>
           <textarea
             className="blog-textarea"
             placeholder="Write your blog content here..."
@@ -123,6 +150,11 @@ function BlogAdmin({ auth }) {
                   />
                 )}
                 <div className="blog-admin-info">
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                    <span className="blog-card-category" style={{ fontSize: "0.7rem" }}>
+                      {CAT_ICON[b.category || "Other"]} {b.category || "Other"}
+                    </span>
+                  </div>
                   <h4>{b.title}</h4>
                   <p className="blog-admin-preview">
                     {b.content.length > 120 ? b.content.substring(0, 120) + "..." : b.content}

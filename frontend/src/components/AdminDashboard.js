@@ -9,6 +9,78 @@ import BlogAdmin from "./BlogAdmin";
 
 const API = "http://localhost:5000";
 const PIE_COLORS = ["#d32f2f", "#f9a825", "#388e3c"];
+function AdminNavIcon({ type }) {
+  const iconProps = {
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "1.9",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": true,
+  };
+
+  switch (type) {
+    case "dashboard":
+      return (
+        <svg {...iconProps}>
+          <path d="M4 19.5h16" />
+          <rect x="5" y="10" width="3" height="7" rx="1" />
+          <rect x="10.5" y="6.5" width="3" height="10.5" rx="1" />
+          <rect x="16" y="8.5" width="3" height="8.5" rx="1" />
+        </svg>
+      );
+    case "feed":
+      return (
+        <svg {...iconProps}>
+          <rect x="3.5" y="4" width="17" height="16" rx="3" />
+          <path d="M9 8h7" />
+          <path d="M9 12h7" />
+          <path d="M9 16h5" />
+          <circle cx="6.5" cy="8" r="0.8" fill="currentColor" stroke="none" />
+          <circle cx="6.5" cy="12" r="0.8" fill="currentColor" stroke="none" />
+          <circle cx="6.5" cy="16" r="0.8" fill="currentColor" stroke="none" />
+        </svg>
+      );
+    case "blogs":
+      return (
+        <svg {...iconProps}>
+          <path d="M5 6.5A2.5 2.5 0 0 1 7.5 4H19v14.5a1.5 1.5 0 0 0-1.5-1.5H7.5A2.5 2.5 0 0 0 5 19.5z" />
+          <path d="M5 6.5v13" />
+          <path d="M8 7.5h8" />
+          <path d="M8 11h6" />
+        </svg>
+      );
+    case "posts":
+      return (
+        <svg {...iconProps}>
+          <path d="M7 4.5h7l4 4V19a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 19V6A1.5 1.5 0 0 1 7.5 4.5z" />
+          <path d="M14 4.5V9h4" />
+          <path d="M9 13h6" />
+          <path d="M9 16h4" />
+        </svg>
+      );
+    case "reports":
+      return (
+        <svg {...iconProps}>
+          <path d="M12 3.5l2.1 4.3 4.8.7-3.5 3.4.8 4.8L12 14.5 7.8 16.7l.8-4.8-3.5-3.4 4.8-.7z" />
+          <path d="M12 8v2.5" />
+          <path d="M12 13.25h.01" />
+        </svg>
+      );
+    case "users":
+      return (
+        <svg {...iconProps}>
+          <circle cx="9" cy="8.5" r="2.5" />
+          <circle cx="16.5" cy="9.5" r="2" />
+          <path d="M4.5 18c1.2-2.6 3.1-3.9 5.7-3.9 2.5 0 4.4 1.3 5.6 3.9" />
+          <path d="M14.5 17.4c.7-1.7 2-2.7 3.9-3" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
 
 function AdminDashboard({ auth, onLogout }) {
   const [page, setPage] = useState("dashboard");
@@ -168,6 +240,16 @@ function AdminDashboard({ auth, onLogout }) {
     } catch { alert("Delete error"); }
   };
 
+  const handleDeleteUser = async (userId, userName) => {
+    if (!window.confirm(`Delete user "${userName}"? This cannot be undone.`)) return;
+    try {
+      await axios.delete(`${API}/delete_user/${userId}`, { headers });
+      fetchUsers();
+    } catch (err) {
+      alert(err.response?.data?.error || "Error deleting user");
+    }
+  };
+
   const handleReportAction = async (reportId, status) => {
     try {
       await axios.put(`${API}/reports/${reportId}`, { status }, { headers });
@@ -198,21 +280,22 @@ function AdminDashboard({ auth, onLogout }) {
       <div className="adm-body">
         {/* Sidebar */}
         <div className="adm-sidebar">
+          <div className="adm-sidebar-section-label">Admin Panel</div>
           {[
-            { key: "dashboard", icon: "\ud83d\udcca", label: "Dashboard" },
-            { key: "feed", icon: "\ud83d\udcf0", label: "Feed" },
-            { key: "blogs", icon: "\ud83d\udcd6", label: "Blog Management" },
-            { key: "posts", icon: "\ud83d\udcdd", label: "Manage Posts" },
-            { key: "reports", icon: "\ud83d\udea8", label: "Reported Posts" },
-            { key: "users", icon: "\ud83d\udc65", label: "Users" },
+            { key: "dashboard", icon: "dashboard", label: "Dashboard" },
+            { key: "feed", icon: "feed", label: "Feed" },
+            { key: "blogs", icon: "blogs", label: "Blog Management" },
+            { key: "posts", icon: "posts", label: "Manage Posts" },
+            { key: "reports", icon: "reports", label: "Reported Posts" },
+            { key: "users", icon: "users", label: "Users" },
           ].map((item) => (
             <div
               key={item.key}
               className={`adm-sidebar-item ${page === item.key ? "active" : ""}`}
               onClick={() => setPage(item.key)}
             >
-              <span className="adm-sidebar-icon">{item.icon}</span>
-              {item.label}
+              <span className="adm-sidebar-icon"><AdminNavIcon type={item.icon} /></span>
+              <span className="adm-sidebar-text">{item.label}</span>
             </div>
           ))}
         </div>
@@ -502,6 +585,7 @@ function AdminDashboard({ auth, onLogout }) {
                         <th>Email</th>
                         <th>Last Active</th>
                         <th>Joined</th>
+                        <th>Action</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -512,6 +596,11 @@ function AdminDashboard({ auth, onLogout }) {
                           <td>{u.email}</td>
                           <td>{u.last_active ? u.last_active.split(" ")[0] : "Never"}</td>
                           <td>{u.created_at ? u.created_at.split(" ")[0] : "-"}</td>
+                          <td>
+                            <button className="btn-danger-sm" onClick={() => handleDeleteUser(u.id, u.name)}>
+                              Delete
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -527,3 +616,4 @@ function AdminDashboard({ auth, onLogout }) {
 }
 
 export default AdminDashboard;
+

@@ -20,6 +20,10 @@ CORS(app)
 app.config["SECRET_KEY"] = "stressbook_secret_key_2024"
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
+DEFAULT_ADMIN_NAME = "Admin"
+DEFAULT_ADMIN_EMAIL = "admin@gmail.com"
+DEFAULT_ADMIN_PASSWORD = "ADMIN@123"
+
 # ==================== DATABASE ====================
 
 def get_db():
@@ -90,17 +94,39 @@ def init_db():
             user_id INTEGER NOT NULL,
             message TEXT NOT NULL,
             is_read INTEGER DEFAULT 0,
+            notif_type TEXT DEFAULT NULL,
+            related_id INTEGER DEFAULT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+        CREATE TABLE IF NOT EXISTS follow_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            requester_id INTEGER NOT NULL,
+            target_id INTEGER NOT NULL,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(requester_id, target_id),
+            FOREIGN KEY (requester_id) REFERENCES users(id),
+            FOREIGN KEY (target_id) REFERENCES users(id)
         );
         CREATE TABLE IF NOT EXISTS blogs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             admin_id INTEGER,
             title TEXT NOT NULL,
             content TEXT NOT NULL,
+            category TEXT NOT NULL DEFAULT 'Other',
             image TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (admin_id) REFERENCES admins(id)
+        );
+        CREATE TABLE IF NOT EXISTS likes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(post_id, user_id),
+            FOREIGN KEY (post_id) REFERENCES posts(id),
+            FOREIGN KEY (user_id) REFERENCES users(id)
         );
     """)
     conn.commit()
@@ -115,9 +141,98 @@ def migrate_db():
         conn.commit()
     except Exception:
         pass  # Column already exists
+    try:
+        conn.execute("ALTER TABLE blogs ADD COLUMN category TEXT DEFAULT 'Other'")
+        conn.commit()
+    except Exception:
+        pass
+    try:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS likes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(post_id, user_id),
+                FOREIGN KEY (post_id) REFERENCES posts(id),
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+        """)
+        conn.commit()
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN is_private INTEGER DEFAULT 0")
+        conn.commit()
+    except Exception:
+        pass
+    try:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS follows (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                follower_id INTEGER NOT NULL,
+                following_id INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(follower_id, following_id),
+                FOREIGN KEY (follower_id) REFERENCES users(id),
+                FOREIGN KEY (following_id) REFERENCES users(id)
+            );
+        """)
+        conn.commit()
+    except Exception:
+        pass
+    try:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS follow_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                requester_id INTEGER NOT NULL,
+                target_id INTEGER NOT NULL,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(requester_id, target_id),
+                FOREIGN KEY (requester_id) REFERENCES users(id),
+                FOREIGN KEY (target_id) REFERENCES users(id)
+            );
+        """)
+        conn.commit()
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE notifications ADD COLUMN notif_type TEXT DEFAULT NULL")
+        conn.commit()
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE notifications ADD COLUMN related_id INTEGER DEFAULT NULL")
+        conn.commit()
+    except Exception:
+        pass
     conn.close()
 
 migrate_db()
+
+def ensure_default_admin():
+    conn = get_db()
+    existing_admin = conn.execute(
+        "SELECT id FROM admins WHERE email = ?",
+        (DEFAULT_ADMIN_EMAIL,)
+    ).fetchone()
+
+    if existing_admin:
+        conn.execute(
+            "UPDATE admins SET name = ?, password = ? WHERE email = ?",
+            (DEFAULT_ADMIN_NAME, DEFAULT_ADMIN_PASSWORD, DEFAULT_ADMIN_EMAIL)
+        )
+    else:
+        conn.execute(
+            "INSERT INTO admins (name, email, password) VALUES (?, ?, ?)",
+            (DEFAULT_ADMIN_NAME, DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD)
+        )
+
+    conn.commit()
+    conn.close()
+
+ensure_default_admin()
 
 # ==================== HELPERS ====================
 
@@ -138,8 +253,11 @@ MEDIUM_STRESS_KEYWORDS = [
     "annoyed", "bothered", "uneasy", "tense", "pressure"
 ]
 
-def create_notification(conn, user_id, message):
-    conn.execute("INSERT INTO notifications (user_id, message) VALUES (?, ?)", (user_id, message))
+def create_notification(conn, user_id, message, notif_type=None, related_id=None):
+    conn.execute(
+        "INSERT INTO notifications (user_id, message, notif_type, related_id) VALUES (?, ?, ?, ?)",
+        (user_id, message, notif_type, related_id)
+    )
 
 CATEGORY_KEYWORDS = {
     "Academic": ["exam", "study", "assignment", "class", "professor", "grade", "college", "university", "homework", "lecture", "semester", "gpa", "thesis", "school", "student"],
@@ -202,38 +320,31 @@ def generate_token(payload):
 
 @app.route("/admin/register", methods=["POST"])
 def admin_register():
-    data = request.json
-    name = data.get("name", "").strip()
-    email = data.get("email", "").strip()
-    password = data.get("password", "").strip()
-
-    if not name or not email or not password:
-        return jsonify({"error": "All fields are required"}), 400
-
-    conn = get_db()
-    try:
-        conn.execute("INSERT INTO admins (name, email, password) VALUES (?, ?, ?)",
-                      (name, email, password))
-        conn.commit()
-        return jsonify({"message": "Admin registered successfully"}), 201
-    except sqlite3.IntegrityError:
-        return jsonify({"error": "Email already exists"}), 409
-    finally:
-        conn.close()
-
+    return jsonify({
+        "error": "Admin registration is disabled. Use the default admin account."
+    }), 403
 @app.route("/admin/login", methods=["POST"])
 def admin_login():
-    data = request.json
+    data = request.json or {}
     email = data.get("email", "").strip()
     password = data.get("password", "").strip()
 
+    if email != DEFAULT_ADMIN_EMAIL or password != DEFAULT_ADMIN_PASSWORD:
+        return jsonify({
+            "error": "Invalid admin credentials. Use the default admin account."
+        }), 401
+
+    ensure_default_admin()
+
     conn = get_db()
-    admin = conn.execute("SELECT * FROM admins WHERE email = ? AND password = ?",
-                          (email, password)).fetchone()
+    admin = conn.execute(
+        "SELECT * FROM admins WHERE email = ? AND password = ?",
+        (DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD)
+    ).fetchone()
     conn.close()
 
     if not admin:
-        return jsonify({"error": "Invalid credentials"}), 401
+        return jsonify({"error": "Default admin account is unavailable"}), 500
 
     token = generate_token({"id": admin["id"], "email": admin["email"], "role": "admin"})
     return jsonify({
@@ -242,7 +353,6 @@ def admin_login():
         "name": admin["name"],
         "email": admin["email"]
     })
-
 # ==================== USER MANAGEMENT (ADMIN) ====================
 
 @app.route("/add_user", methods=["POST"])
@@ -277,6 +387,19 @@ def get_users():
     users = conn.execute("SELECT id, name, email, last_active, created_at FROM users").fetchall()
     conn.close()
     return jsonify([dict(u) for u in users])
+
+@app.route("/delete_user/<int:user_id>", methods=["DELETE"])
+@admin_required
+def delete_user(user_id):
+    conn = get_db()
+    user = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not user:
+        conn.close()
+        return jsonify({"error": "User not found"}), 404
+    conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({"message": "User deleted successfully"})
 
 @app.route("/export_users_csv", methods=["GET"])
 @admin_required
@@ -370,6 +493,30 @@ def import_users_csv():
     conn.close()
     return jsonify({"message": f"{added} users added, {skipped} skipped", "errors": errors})
 
+# ==================== USER AUTH ====================
+
+@app.route("/user/register", methods=["POST"])
+def user_register():
+    data = request.json or {}
+    name = data.get("name", "").strip()
+    email = data.get("email", "").strip()
+    password = data.get("password", "").strip()
+
+    if not name or not email or not password:
+        return jsonify({"error": "All fields are required"}), 400
+
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO users (name, email, password) VALUES (?, ?, ?)",
+            (name, email, password)
+        )
+        conn.commit()
+        return jsonify({"message": "User registered successfully"}), 201
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "Email already exists"}), 409
+    finally:
+        conn.close()
 # ==================== USER LOGIN ====================
 
 @app.route("/user/login", methods=["POST"])
@@ -414,7 +561,7 @@ def get_profile():
     user_id = request.token_data.get("id")
     conn = get_db()
 
-    user = conn.execute("SELECT id, name, email, profile_pic, admin_id, last_active, created_at FROM users WHERE id = ?",
+    user = conn.execute("SELECT id, name, email, profile_pic, admin_id, last_active, created_at, is_private FROM users WHERE id = ?",
                          (user_id,)).fetchone()
     if not user:
         conn.close()
@@ -436,6 +583,9 @@ def get_profile():
         (user_id,)
     ).fetchall()
 
+    followers_count = conn.execute("SELECT COUNT(*) as c FROM follows WHERE following_id = ?", (user_id,)).fetchone()["c"]
+    following_count = conn.execute("SELECT COUNT(*) as c FROM follows WHERE follower_id = ?", (user_id,)).fetchone()["c"]
+
     conn.close()
 
     return jsonify({
@@ -445,8 +595,142 @@ def get_profile():
             "total_posts": total_posts,
             "last_active": user["last_active"] or (last_post["created_at"] if last_post else None)
         },
-        "posts": [dict(p) for p in posts]
+        "posts": [dict(p) for p in posts],
+        "followers_count": followers_count,
+        "following_count": following_count
     })
+
+# ==================== FOLLOW / PRIVACY ====================
+
+@app.route("/follow/<int:target_id>", methods=["POST"])
+@token_required
+def follow_toggle(target_id):
+    follower_id = request.token_data.get("id")
+    if follower_id == target_id:
+        return jsonify({"error": "You cannot follow yourself"}), 400
+    conn = get_db()
+    target = conn.execute("SELECT id, is_private FROM users WHERE id = ?", (target_id,)).fetchone()
+    if not target:
+        conn.close()
+        return jsonify({"error": "User not found"}), 404
+
+    existing_follow = conn.execute(
+        "SELECT id FROM follows WHERE follower_id = ? AND following_id = ?",
+        (follower_id, target_id)
+    ).fetchone()
+
+    if existing_follow:
+        # Unfollow
+        conn.execute("DELETE FROM follows WHERE follower_id = ? AND following_id = ?", (follower_id, target_id))
+        conn.commit()
+        followers_count = conn.execute("SELECT COUNT(*) as c FROM follows WHERE following_id = ?", (target_id,)).fetchone()["c"]
+        conn.close()
+        return jsonify({"is_following": False, "has_pending_request": False, "followers_count": followers_count})
+
+    if target["is_private"]:
+        existing_req = conn.execute(
+            "SELECT id FROM follow_requests WHERE requester_id = ? AND target_id = ? AND status = 'pending'",
+            (follower_id, target_id)
+        ).fetchone()
+        if existing_req:
+            # Cancel the pending request
+            conn.execute(
+                "DELETE FROM notifications WHERE user_id = ? AND notif_type = 'follow_request' AND related_id = ?",
+                (target_id, existing_req["id"])
+            )
+            conn.execute(
+                "DELETE FROM follow_requests WHERE requester_id = ? AND target_id = ? AND status = 'pending'",
+                (follower_id, target_id)
+            )
+            conn.commit()
+            followers_count = conn.execute("SELECT COUNT(*) as c FROM follows WHERE following_id = ?", (target_id,)).fetchone()["c"]
+            conn.close()
+            return jsonify({"is_following": False, "has_pending_request": False, "followers_count": followers_count})
+        else:
+            # Send a follow request
+            conn.execute(
+                "INSERT OR IGNORE INTO follow_requests (requester_id, target_id) VALUES (?, ?)",
+                (follower_id, target_id)
+            )
+            conn.commit()
+            req_row = conn.execute(
+                "SELECT id FROM follow_requests WHERE requester_id = ? AND target_id = ?",
+                (follower_id, target_id)
+            ).fetchone()
+            requester = conn.execute("SELECT name FROM users WHERE id = ?", (follower_id,)).fetchone()
+            create_notification(conn, target_id, f"{requester['name']} wants to follow you",
+                                notif_type="follow_request", related_id=req_row["id"])
+            conn.commit()
+            followers_count = conn.execute("SELECT COUNT(*) as c FROM follows WHERE following_id = ?", (target_id,)).fetchone()["c"]
+            conn.close()
+            return jsonify({"is_following": False, "has_pending_request": True, "followers_count": followers_count})
+    else:
+        # Public account: follow immediately
+        conn.execute("INSERT INTO follows (follower_id, following_id) VALUES (?, ?)", (follower_id, target_id))
+        follower = conn.execute("SELECT name FROM users WHERE id = ?", (follower_id,)).fetchone()
+        create_notification(conn, target_id, f"{follower['name']} started following you")
+        conn.commit()
+        followers_count = conn.execute("SELECT COUNT(*) as c FROM follows WHERE following_id = ?", (target_id,)).fetchone()["c"]
+        conn.close()
+        return jsonify({"is_following": True, "has_pending_request": False, "followers_count": followers_count})
+
+@app.route("/follow-request/<int:request_id>/accept", methods=["POST"])
+@token_required
+def accept_follow_request(request_id):
+    user_id = request.token_data.get("id")
+    conn = get_db()
+    req = conn.execute(
+        "SELECT * FROM follow_requests WHERE id = ? AND target_id = ? AND status = 'pending'",
+        (request_id, user_id)
+    ).fetchone()
+    if not req:
+        conn.close()
+        return jsonify({"error": "Follow request not found"}), 404
+    conn.execute("INSERT OR IGNORE INTO follows (follower_id, following_id) VALUES (?, ?)",
+                 (req["requester_id"], user_id))
+    conn.execute("UPDATE follow_requests SET status = 'accepted' WHERE id = ?", (request_id,))
+    conn.execute(
+        "UPDATE notifications SET is_read = 1 WHERE user_id = ? AND notif_type = 'follow_request' AND related_id = ?",
+        (user_id, request_id)
+    )
+    target_name = conn.execute("SELECT name FROM users WHERE id = ?", (user_id,)).fetchone()
+    create_notification(conn, req["requester_id"], f"{target_name['name']} accepted your follow request")
+    conn.commit()
+    conn.close()
+    return jsonify({"message": "Follow request accepted"})
+
+@app.route("/follow-request/<int:request_id>/decline", methods=["POST"])
+@token_required
+def decline_follow_request(request_id):
+    user_id = request.token_data.get("id")
+    conn = get_db()
+    req = conn.execute(
+        "SELECT * FROM follow_requests WHERE id = ? AND target_id = ? AND status = 'pending'",
+        (request_id, user_id)
+    ).fetchone()
+    if not req:
+        conn.close()
+        return jsonify({"error": "Follow request not found"}), 404
+    conn.execute("UPDATE follow_requests SET status = 'declined' WHERE id = ?", (request_id,))
+    conn.execute(
+        "UPDATE notifications SET is_read = 1 WHERE user_id = ? AND notif_type = 'follow_request' AND related_id = ?",
+        (user_id, request_id)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({"message": "Follow request declined"})
+
+@app.route("/profile/privacy", methods=["PUT"])
+@token_required
+def update_privacy():
+    user_id = request.token_data.get("id")
+    data = request.json or {}
+    is_private = 1 if data.get("is_private") else 0
+    conn = get_db()
+    conn.execute("UPDATE users SET is_private = ? WHERE id = ?", (is_private, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({"is_private": bool(is_private), "message": "Privacy updated"})
 
 # ==================== POSTS ====================
 
@@ -527,6 +811,7 @@ def create_post():
 @token_required
 def get_posts():
     conn = get_db()
+    current_user_id = request.token_data.get("id")
 
     query = """
         SELECT posts.id, posts.content, posts.stress_level, posts.category, posts.created_at,
@@ -534,12 +819,18 @@ def get_posts():
         FROM posts
         JOIN users ON posts.user_id = users.id
         WHERE posts.is_deleted = 0
+        AND (
+            users.is_private = 0
+            OR posts.user_id = ?
+            OR EXISTS (SELECT 1 FROM follows WHERE follower_id = ? AND following_id = posts.user_id)
+        )
     """
-    params = []
+    params = [current_user_id, current_user_id]
 
     # Optional filters
     filter_category = request.args.get("category")
     filter_stress = request.args.get("stress_level")
+    sort_by = request.args.get("sort_by", "")
 
     if filter_category and filter_category in ["Academic", "Work", "Personal", "Financial", "Health", "Other"]:
         query += " AND posts.category = ?"
@@ -563,6 +854,9 @@ def get_posts():
             ORDER BY comments.created_at ASC
         """, (p["id"],)).fetchall()
 
+        like_count = conn.execute("SELECT COUNT(*) as c FROM likes WHERE post_id = ?", (p["id"],)).fetchone()["c"]
+        liked_by_me = conn.execute("SELECT id FROM likes WHERE post_id = ? AND user_id = ?", (p["id"], current_user_id)).fetchone() is not None
+
         result.append({
             "id": p["id"],
             "content": p["content"],
@@ -574,12 +868,79 @@ def get_posts():
             "name": p["name"],
             "email": p["email"],
             "profile_pic": p["profile_pic"],
-            "comments": [dict(c) for c in comments]
+            "comments": [dict(c) for c in comments],
+            "like_count": like_count,
+            "liked_by_me": liked_by_me
         })
+
+    if sort_by == "most_likes":
+        result.sort(key=lambda x: x["like_count"], reverse=True)
+    elif sort_by == "most_comments":
+        result.sort(key=lambda x: len(x["comments"]), reverse=True)
 
     conn.close()
     return jsonify(result)
 
+@app.route("/posts/<int:post_id>/like", methods=["POST"])
+@token_required
+def toggle_like(post_id):
+    user_id = request.token_data.get("id")
+    conn = get_db()
+    post = conn.execute("""
+        SELECT posts.id, posts.user_id, users.is_private
+        FROM posts
+        JOIN users ON posts.user_id = users.id
+        WHERE posts.id = ? AND posts.is_deleted = 0
+    """, (post_id,)).fetchone()
+    if not post:
+        conn.close()
+        return jsonify({"error": "Post not found"}), 404
+    if post["is_private"] and post["user_id"] != user_id:
+        is_following = conn.execute(
+            "SELECT id FROM follows WHERE follower_id = ? AND following_id = ?",
+            (user_id, post["user_id"])
+        ).fetchone() is not None
+        if not is_following:
+            conn.close()
+            return jsonify({"error": "This user's profile is private"}), 403
+    existing = conn.execute("SELECT id FROM likes WHERE post_id = ? AND user_id = ?", (post_id, user_id)).fetchone()
+    if existing:
+        conn.execute("DELETE FROM likes WHERE post_id = ? AND user_id = ?", (post_id, user_id))
+        liked = False
+    else:
+        conn.execute("INSERT INTO likes (post_id, user_id) VALUES (?, ?)", (post_id, user_id))
+        liked = True
+    conn.commit()
+    like_count = conn.execute("SELECT COUNT(*) as c FROM likes WHERE post_id = ?", (post_id,)).fetchone()["c"]
+    conn.close()
+    return jsonify({"liked": liked, "like_count": like_count})
+
+@app.route("/posts/<int:post_id>", methods=["DELETE"])
+@token_required
+def delete_own_post(post_id):
+    user_id = request.token_data.get("id")
+    conn = get_db()
+    post = conn.execute(
+        "SELECT id, user_id FROM posts WHERE id = ? AND is_deleted = 0",
+        (post_id,)
+    ).fetchone()
+
+    if not post:
+        conn.close()
+        return jsonify({"error": "Post not found"}), 404
+
+    if post["user_id"] != user_id:
+        conn.close()
+        return jsonify({"error": "You can only delete your own posts"}), 403
+
+    conn.execute("UPDATE posts SET is_deleted = 1 WHERE id = ?", (post_id,))
+    conn.execute(
+        "UPDATE reports SET status = 'resolved' WHERE post_id = ? AND status = 'pending'",
+        (post_id,)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({"message": "Post deleted"})
 # ==================== COMMENTS ====================
 
 @app.route("/comment", methods=["POST"])
@@ -594,13 +955,29 @@ def add_comment():
         return jsonify({"error": "Post ID and comment are required"}), 400
 
     conn = get_db()
+    post = conn.execute("""
+        SELECT posts.user_id, users.is_private
+        FROM posts
+        JOIN users ON posts.user_id = users.id
+        WHERE posts.id = ? AND posts.is_deleted = 0
+    """, (post_id,)).fetchone()
+    if not post:
+        conn.close()
+        return jsonify({"error": "Post not found"}), 404
+    if post["is_private"] and post["user_id"] != user_id:
+        is_following = conn.execute(
+            "SELECT id FROM follows WHERE follower_id = ? AND following_id = ?",
+            (user_id, post["user_id"])
+        ).fetchone() is not None
+        if not is_following:
+            conn.close()
+            return jsonify({"error": "This user's profile is private"}), 403
+
     conn.execute("INSERT INTO comments (post_id, user_id, comment) VALUES (?, ?, ?)",
                   (post_id, user_id, comment))
     update_last_active(conn, user_id)
 
-    # Notify post owner
-    post = conn.execute("SELECT user_id FROM posts WHERE id = ?", (post_id,)).fetchone()
-    if post and post["user_id"] != user_id:
+    if post["user_id"] != user_id:
         commenter = conn.execute("SELECT name FROM users WHERE id = ?", (user_id,)).fetchone()
         create_notification(conn, post["user_id"], f"{commenter['name']} commented on your post")
 
@@ -857,58 +1234,194 @@ def export_analytics_csv():
 
 # ==================== CHATBOT WITH RAG ====================
 
+BLOG_CATEGORY_KEYWORDS = {
+    "Academic": ["exam", "study", "assignment", "class", "professor", "grade", "college", "university",
+                 "homework", "semester", "gpa", "thesis", "school", "student", "lecture", "test", "academic"],
+    "Work": ["manager", "deadline", "meeting", "project", "office", "boss", "client", "promotion",
+             "salary", "workload", "coworker", "team", "overtime", "job", "career", "work", "burnout"],
+    "Personal": ["family", "relationship", "friend", "breakup", "marriage", "parent", "divorce",
+                 "loneliness", "partner", "love", "fight", "argument", "personal", "home", "lonely"],
+    "Financial": ["money", "debt", "loan", "rent", "bill", "expense", "broke", "savings",
+                  "credit", "payment", "financial", "afford", "emi", "budget"],
+    "Health": ["sick", "hospital", "doctor", "pain", "sleep", "headache", "medicine", "health",
+               "weight", "diet", "anxiety", "depression", "mental", "therapy", "tired", "fatigue"],
+    "Other": ["stress", "overwhelmed", "struggling", "difficult", "help", "support", "advice", "worried"],
+}
+
+def suggest_blogs_for_message(user_message, blogs):
+    """Return up to 3 most relevant blogs based on keyword overlap with the user's message."""
+    if not blogs:
+        return []
+    lower_msg = user_message.lower()
+    scored = []
+    for blog in blogs:
+        score = 0
+        cat = blog.get("category", "Other")
+        cat_kws = BLOG_CATEGORY_KEYWORDS.get(cat, [])
+        score += sum(2 for kw in cat_kws if kw in lower_msg)
+        title_words = [w for w in blog["title"].lower().split() if len(w) > 3]
+        score += sum(3 for w in title_words if w in lower_msg)
+        if score > 0:
+            scored.append((score, blog))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [{"id": b["id"], "title": b["title"], "category": b.get("category", "Other")}
+            for _, b in scored[:3]]
+
+SYSTEM_PROMPT = """
+You are a calm, kind, and emotionally supportive AI companion.
+
+Your role:
+- Talk like a gentle, understanding human
+- Act like a supportive friend first, therapist second
+- Make the user feel safe and heard
+
+IMPORTANT BEHAVIOR RULES:
+
+1. Be Polite & Gentle
+- NEVER use words like: "ugh", "man", "bro"
+- Use soft, calm language
+Examples:
+- "I'm sorry to hear that…"
+- "That sounds really difficult…"
+- "I understand…"
+
+2. Do NOT Ask Too Many Questions
+- Avoid asking a question in every message
+- Follow this pattern:
+  → Empathy first
+  → Reflection (optional)
+  → THEN (sometimes) one gentle question
+
+- Sometimes respond WITHOUT a question
+
+3. Emotional Flow
+- First: acknowledge feeling
+- Then: reflect situation
+- Then: (optional) ask ONE simple question
+
+4. Memory Usage (RAG)
+- When user mentions repeated stress:
+  → gently refer to patterns
+  → do NOT sound intense or analytical
+
+Example:
+"Seems like this has been coming up again, especially with exams…"
+
+5. Advice Style
+- When user asks "what should I do":
+  → DO NOT ask another question immediately
+  → give 1–2 simple, gentle suggestions
+
+6. Tone
+- Calm
+- Soft
+- Supportive
+- Not overly dramatic
+- Not robotic
+
+7. Keep Responses Short
+- 2–4 lines
+- Simple and clear
+
+---
+
+Examples:
+
+User: today was bad
+Good:
+"I'm sorry to hear that… some days can feel really heavy."
+
+User: i feel stressed
+Good:
+"That sounds really tough… especially if it's been building up for a while."
+
+User: what should i do
+Good:
+"Maybe you can start with something small, like studying for just 20 minutes and taking a short break. You don't have to do everything at once."
+"""
+
 @app.route("/chat", methods=["POST"])
 @token_required
 def chat():
     user_id = request.token_data.get("id")
-    user_input = request.json.get("message", "").strip()
+    data = request.json
+    user_input = data.get("message", "").strip()
+    history = data.get("history", [])
 
     if not user_input:
         return jsonify({"error": "Message is required"}), 400
 
     conn = get_db()
     posts = conn.execute(
-        "SELECT content, stress_level, created_at FROM posts WHERE user_id = ? AND is_deleted = 0 ORDER BY created_at DESC LIMIT 20",
+        "SELECT content, stress_level, created_at FROM posts WHERE user_id = ? AND is_deleted = 0 ORDER BY created_at DESC LIMIT 10",
         (user_id,)
     ).fetchall()
+    blogs_rows = conn.execute(
+        "SELECT id, title, content, category FROM blogs ORDER BY created_at DESC"
+    ).fetchall()
+    blogs_list = [dict(b) for b in blogs_rows]
     update_last_active(conn, user_id)
     conn.commit()
     conn.close()
 
     if posts:
-        stress_entries = []
-        for p in posts:
-            stress_entries.append(f"- [{p['stress_level']}] {p['content']} ({p['created_at']})")
+        stress_entries = [f"- [{p['stress_level']}] {p['content']}" for p in posts]
         stress_history = "\n".join(stress_entries)
     else:
         stress_history = "No previous stress posts."
 
-    rag_prompt = (
-        "You are a mental wellness assistant. Based on this user's past stress:\n"
-        f"[{stress_history}]\n\n"
-        f"Answer this:\n[{user_input}]\n\n"
-        "Provide advice, suggestions, and emotional support."
-    )
+    # Build blog context for the AI
+    if blogs_list:
+        blog_context_lines = [
+            f"- [{b.get('category', 'Other')}] \"{b['title']}\""
+            for b in blogs_list[:15]
+        ]
+        blog_context = "\n".join(blog_context_lines)
+    else:
+        blog_context = "No resource blogs available yet."
+
+    # Compute blog suggestions based on keyword relevance
+    suggested_blogs = suggest_blogs_for_message(user_input, blogs_list)
+
+    combined_prompt = f"""{SYSTEM_PROMPT}
+
+USER PAST CONTEXT (IMPORTANT - USE THIS):
+{stress_history}
+
+AVAILABLE RESOURCE BLOGS (if relevant, briefly mention one by its exact title):
+{blog_context}
+
+CURRENT MESSAGE:
+{user_input}
+
+Respond naturally. Use past context when relevant. If a blog above directly matches the user's concern, mention it by exact title in your reply:
+"""
+
+    messages = [{"role": "system", "content": combined_prompt}]
+    for msg in history[-10:]:
+        role = "user" if msg.get("role") == "user" else "assistant"
+        messages.append({"role": role, "content": msg.get("content", "")})
+    messages.append({"role": "user", "content": user_input})
 
     api_key = os.getenv("MISTRAL_API_KEY")
     if not api_key or api_key == "your_api_key_here":
         return jsonify({"error": "Mistral API key not configured"}), 500
 
     url = "https://api.mistral.ai/v1/chat/completions"
-    headers = {
+    req_headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
     body = {
         "model": "mistral-small",
-        "messages": [{"role": "user", "content": rag_prompt}]
+        "messages": messages
     }
 
     try:
-        response = requests.post(url, headers=headers, json=body)
+        response = requests.post(url, headers=req_headers, json=body)
         response.raise_for_status()
         reply = response.json()["choices"][0]["message"]["content"]
-        return jsonify({"reply": reply})
+        return jsonify({"reply": reply, "suggested_blogs": suggested_blogs})
     except requests.exceptions.HTTPError as e:
         return jsonify({"error": f"API Error: {str(e)}"}), 500
     except Exception as e:
@@ -945,27 +1458,60 @@ def search_users():
 @app.route("/profile/<int:user_id>", methods=["GET"])
 @token_required
 def get_user_profile(user_id):
+    current_user_id = request.token_data.get("id")
     conn = get_db()
     user = conn.execute(
-        "SELECT id, name, email, profile_pic, created_at FROM users WHERE id = ?",
+        "SELECT id, name, email, profile_pic, created_at, is_private FROM users WHERE id = ?",
         (user_id,)
     ).fetchone()
     if not user:
         conn.close()
         return jsonify({"error": "User not found"}), 404
 
+    is_private = bool(user["is_private"])
+    is_following = conn.execute(
+        "SELECT id FROM follows WHERE follower_id = ? AND following_id = ?",
+        (current_user_id, user_id)
+    ).fetchone() is not None
+    has_pending_request = conn.execute(
+        "SELECT id FROM follow_requests WHERE requester_id = ? AND target_id = ? AND status = 'pending'",
+        (current_user_id, user_id)
+    ).fetchone() is not None
+    followers_count = conn.execute("SELECT COUNT(*) as c FROM follows WHERE following_id = ?", (user_id,)).fetchone()["c"]
+    following_count = conn.execute("SELECT COUNT(*) as c FROM follows WHERE follower_id = ?", (user_id,)).fetchone()["c"]
+
+    # Private account: hide posts unless viewer is a follower or it's own profile
+    if is_private and not is_following and current_user_id != user_id:
+        conn.close()
+        return jsonify({
+            "user": dict(user),
+            "stats": {"total_posts": 0},
+            "posts": [],
+            "is_private": True,
+            "is_following": False,
+            "has_pending_request": has_pending_request,
+            "followers_count": followers_count,
+            "following_count": following_count,
+            "is_locked": True
+        })
+
     posts = conn.execute(
         "SELECT id, content, created_at FROM posts WHERE user_id = ? AND is_deleted = 0 ORDER BY created_at DESC",
         (user_id,)
     ).fetchall()
-
     total_posts = len(posts)
     conn.close()
 
     return jsonify({
         "user": dict(user),
         "stats": {"total_posts": total_posts},
-        "posts": [dict(p) for p in posts]
+        "posts": [dict(p) for p in posts],
+        "is_private": is_private,
+        "is_following": is_following,
+        "has_pending_request": has_pending_request,
+        "followers_count": followers_count,
+        "following_count": following_count,
+        "is_locked": False
     })
 
 # ==================== MESSAGES ====================
@@ -1066,7 +1612,11 @@ def get_notifications():
     user_id = request.token_data.get("id")
     conn = get_db()
     notifs = conn.execute(
-        "SELECT id, message, is_read, created_at FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 30",
+        """SELECT n.id, n.message, n.is_read, n.created_at, n.notif_type, n.related_id,
+                  fr.status as request_status
+           FROM notifications n
+           LEFT JOIN follow_requests fr ON n.notif_type = 'follow_request' AND fr.id = n.related_id
+           WHERE n.user_id = ? ORDER BY n.created_at DESC LIMIT 30""",
         (user_id,)
     ).fetchall()
     unread = conn.execute(
@@ -1104,14 +1654,18 @@ def create_blog():
     admin_id = request.token_data.get("id")
     title = request.form.get("title", "").strip()
     content = request.form.get("content", "").strip()
+    category = request.form.get("category", "Other").strip()
+    valid_blog_cats = ["Academic", "Work", "Personal", "Financial", "Health", "Other"]
+    if category not in valid_blog_cats:
+        category = "Other"
 
     if not title or not content:
         return jsonify({"error": "Title and content are required"}), 400
 
     conn = get_db()
     cursor = conn.execute(
-        "INSERT INTO blogs (admin_id, title, content) VALUES (?, ?, ?)",
-        (admin_id, title, content)
+        "INSERT INTO blogs (admin_id, title, content, category) VALUES (?, ?, ?, ?)",
+        (admin_id, title, content, category)
     )
     blog_id = cursor.lastrowid
 
@@ -1135,7 +1689,7 @@ def create_blog():
 def get_blogs():
     conn = get_db()
     blogs = conn.execute(
-        "SELECT id, admin_id, title, content, image, created_at FROM blogs ORDER BY created_at DESC"
+        "SELECT id, admin_id, title, content, category, image, created_at FROM blogs ORDER BY created_at DESC"
     ).fetchall()
     conn.close()
     return jsonify([dict(b) for b in blogs])
@@ -1145,7 +1699,7 @@ def get_blogs():
 def get_blog(blog_id):
     conn = get_db()
     blog = conn.execute(
-        "SELECT id, admin_id, title, content, image, created_at FROM blogs WHERE id = ?",
+        "SELECT id, admin_id, title, content, category, image, created_at FROM blogs WHERE id = ?",
         (blog_id,)
     ).fetchone()
     conn.close()
@@ -1168,3 +1722,7 @@ def delete_blog(blog_id):
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
+
+
+

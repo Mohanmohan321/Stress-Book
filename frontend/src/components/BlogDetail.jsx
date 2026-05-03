@@ -3,6 +3,15 @@ import axios from "axios";
 
 const API = "http://localhost:5000";
 
+const CAT_ICON = {
+  Academic: "🎓",
+  Work: "💼",
+  Personal: "🏠",
+  Financial: "💰",
+  Health: "🏥",
+  Other: "📌",
+};
+
 function BlogDetail({ auth, blogId, onBack }) {
   const [blog, setBlog] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -21,10 +30,12 @@ function BlogDetail({ auth, blogId, onBack }) {
   if (loading) return <p className="empty-text">Loading...</p>;
   if (!blog) return <p className="empty-text">Blog not found.</p>;
 
+  const cat = blog.category || "Other";
+
   return (
     <div className="blog-detail">
       <button className="back-btn" onClick={onBack}>
-        {"\u2190"} Back to Blogs
+        ← Back to Blogs
       </button>
       {blog.image && (
         <img
@@ -33,10 +44,15 @@ function BlogDetail({ auth, blogId, onBack }) {
           className="blog-detail-img"
         />
       )}
+      <div className="blog-detail-meta">
+        <span className="blog-card-category">
+          {CAT_ICON[cat]} {cat}
+        </span>
+        <span className="blog-detail-date">
+          {blog.created_at ? blog.created_at.split(" ")[0] : "-"}
+        </span>
+      </div>
       <h1 className="blog-detail-title">{blog.title}</h1>
-      <p className="blog-detail-date">
-        {blog.created_at ? blog.created_at.split(" ")[0] : "-"}
-      </p>
       <div className="blog-detail-content">{blog.content}</div>
     </div>
   );
