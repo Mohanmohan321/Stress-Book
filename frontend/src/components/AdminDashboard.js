@@ -4,7 +4,6 @@ import {
   PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
   LineChart, Line, XAxis, YAxis, CartesianGrid
 } from "recharts";
-import AdminFeed from "./AdminFeed";
 import BlogAdmin from "./BlogAdmin";
 
 const API = "http://localhost:5000";
@@ -111,6 +110,9 @@ function AdminDashboard({ auth, onLogout }) {
 
   // Reports
   const [reports, setReports] = useState([]);
+
+  // Post preview modal
+  const [selectedPost, setSelectedPost] = useState(null);
 
   const headers = { Authorization: `Bearer ${auth.token}` };
 
@@ -233,9 +235,9 @@ function AdminDashboard({ auth, onLogout }) {
   };
 
   const handleDeletePost = async (postId) => {
-    if (!window.confirm("Soft-delete this post?")) return;
     try {
       await axios.delete(`${API}/admin/posts/${postId}`, { headers });
+      setSelectedPost(null);
       fetchPosts();
     } catch { alert("Delete error"); }
   };
@@ -283,7 +285,6 @@ function AdminDashboard({ auth, onLogout }) {
           <div className="adm-sidebar-section-label">Admin Panel</div>
           {[
             { key: "dashboard", icon: "dashboard", label: "Dashboard" },
-            { key: "feed", icon: "feed", label: "Feed" },
             { key: "blogs", icon: "blogs", label: "Blog Management" },
             { key: "posts", icon: "posts", label: "Manage Posts" },
             { key: "reports", icon: "reports", label: "Reported Posts" },
@@ -302,9 +303,6 @@ function AdminDashboard({ auth, onLogout }) {
 
         {/* Main */}
         <div className="adm-main">
-
-          {/* ==================== FEED ==================== */}
-          {page === "feed" && <AdminFeed auth={auth} />}
 
           {/* ==================== BLOG MANAGEMENT ==================== */}
           {page === "blogs" && <BlogAdmin auth={auth} />}
@@ -451,26 +449,28 @@ function AdminDashboard({ auth, onLogout }) {
                         <th>Content</th>
                         <th>Stress</th>
                         <th>Date</th>
-                        <th>Action</th>
                       </tr>
                     </thead>
                     <tbody>
                       {posts.map((p) => (
-                        <tr key={p.id}>
+                        <tr
+                          key={p.id}
+                          className="post-row-clickable"
+                          onClick={() => setSelectedPost(p)}
+                          title="Click to review this post"
+                        >
                           <td>{p.id}</td>
                           <td>{p.name}</td>
-                          <td className="td-content">{p.content}</td>
+                          <td className="td-content">
+                            <span className="td-content-text">{p.content}</span>
+                            {p.image && <span className="td-img-badge">IMG</span>}
+                          </td>
                           <td>
                             <span className={`stress-tag ${p.stress_level.toLowerCase()}`}>
                               {p.stress_level}
                             </span>
                           </td>
                           <td>{p.created_at ? p.created_at.split(" ")[0] : "-"}</td>
-                          <td>
-                            <button className="btn-danger-sm" onClick={() => handleDeletePost(p.id)}>
-                              Delete
-                            </button>
-                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -611,6 +611,77 @@ function AdminDashboard({ auth, onLogout }) {
           )}
         </div>
       </div>
+
+      {/* ==================== POST PREVIEW MODAL ==================== */}
+      {selectedPost && (
+        <div className="modal-overlay post-preview-overlay" onClick={() => setSelectedPost(null)}>
+          <div className="modal-box post-preview-box" onClick={(e) => e.stopPropagation()}>
+
+            <div className="post-preview-header">
+              <div className="post-preview-user">
+                <div className="post-preview-avatar">
+                  {selectedPost.name ? selectedPost.name[0].toUpperCase() : "U"}
+                </div>
+                <div>
+                  <div className="post-preview-name">{selectedPost.name}</div>
+                  <div className="post-preview-email">{selectedPost.email}</div>
+                </div>
+              </div>
+              <button className="post-preview-close" onClick={() => setSelectedPost(null)} aria-label="Close">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="post-preview-meta">
+              <span className={`stress-tag ${selectedPost.stress_level.toLowerCase()}`}>
+                {selectedPost.stress_level}
+              </span>
+              {selectedPost.category && (
+                <span className="post-preview-category">{selectedPost.category}</span>
+              )}
+              <span className="post-preview-date">
+                {selectedPost.created_at ? selectedPost.created_at.split(" ")[0] : "-"}
+              </span>
+              <span className="post-preview-id">#{selectedPost.id}</span>
+            </div>
+
+            <div className="post-preview-body">
+              <p className="post-preview-content">{selectedPost.content}</p>
+              {selectedPost.image && (
+                <div className="post-preview-img-wrap">
+                  <img
+                    src={`${API}${selectedPost.image}`}
+                    alt="Post attachment"
+                    className="post-preview-img"
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="post-preview-footer modal-actions">
+              <button className="modal-cancel" onClick={() => setSelectedPost(null)}>
+                Close
+              </button>
+              <button
+                className="post-preview-delete-btn"
+                onClick={() => handleDeletePost(selectedPost.id)}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                  <path d="M10 11v6M14 11v6" />
+                  <path d="M9 6V4h6v2" />
+                </svg>
+                Delete Post
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
