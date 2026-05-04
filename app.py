@@ -622,10 +622,34 @@ def follow_toggle(target_id):
     if existing_follow:
         # Unfollow
         conn.execute("DELETE FROM follows WHERE follower_id = ? AND following_id = ?", (follower_id, target_id))
-        conn.commit()
-        followers_count = conn.execute("SELECT COUNT(*) as c FROM follows WHERE following_id = ?", (target_id,)).fetchone()["c"]
-        conn.close()
-        return jsonify({"is_following": False, "has_pending_request": False, "followers_count": followers_count})
+        if target["is_private"]:
+            # Private account: auto-submit a new follow request so the button shows "Requested"
+            # and the private user gets notified to accept or decline.
+            conn.execute(
+                "DELETE FROM follow_requests WHERE requester_id = ? AND target_id = ?",
+                (follower_id, target_id)
+            )
+            conn.execute(
+                "INSERT INTO follow_requests (requester_id, target_id, status) VALUES (?, ?, 'pending')",
+                (follower_id, target_id)
+            )
+            conn.commit()
+            req_row = conn.execute(
+                "SELECT id FROM follow_requests WHERE requester_id = ? AND target_id = ?",
+                (follower_id, target_id)
+            ).fetchone()
+            requester = conn.execute("SELECT name FROM users WHERE id = ?", (follower_id,)).fetchone()
+            create_notification(conn, target_id, f"{requester['name']} wants to follow you",
+                                notif_type="follow_request", related_id=req_row["id"])
+            conn.commit()
+            followers_count = conn.execute("SELECT COUNT(*) as c FROM follows WHERE following_id = ?", (target_id,)).fetchone()["c"]
+            conn.close()
+            return jsonify({"is_following": False, "has_pending_request": True, "followers_count": followers_count})
+        else:
+            conn.commit()
+            followers_count = conn.execute("SELECT COUNT(*) as c FROM follows WHERE following_id = ?", (target_id,)).fetchone()["c"]
+            conn.close()
+            return jsonify({"is_following": False, "has_pending_request": False, "followers_count": followers_count})
 
     if target["is_private"]:
         existing_req = conn.execute(
@@ -647,9 +671,14 @@ def follow_toggle(target_id):
             conn.close()
             return jsonify({"is_following": False, "has_pending_request": False, "followers_count": followers_count})
         else:
-            # Send a follow request
+            # Send a fresh follow request; delete any stale accepted/declined row first
+            # to avoid the UNIQUE constraint silently swallowing the INSERT.
             conn.execute(
-                "INSERT OR IGNORE INTO follow_requests (requester_id, target_id) VALUES (?, ?)",
+                "DELETE FROM follow_requests WHERE requester_id = ? AND target_id = ?",
+                (follower_id, target_id)
+            )
+            conn.execute(
+                "INSERT INTO follow_requests (requester_id, target_id, status) VALUES (?, ?, 'pending')",
                 (follower_id, target_id)
             )
             conn.commit()
